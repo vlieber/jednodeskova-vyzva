@@ -1,0 +1,13 @@
+cpu Z80
+
+memory.ram.from 0x8000
+memory.ram.to 0x83ff
+memory.rom.from 0x0000
+memory.rom.to 0x0fff
+
+serial 6850
+serial.data 0x01
+serial.control 0x00
+serial.interrupt 0
+
+terminal.caps 1

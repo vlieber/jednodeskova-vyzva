@@ -1,0 +1,713 @@
+            .ENGINE mycomputer 
+
+USER_RAM_START EQU  8000h 
+USER_RAM_END EQU    82FFh 
+MONITOR_RAM_START EQU 8300h 
+MONITOR_RAM_END EQU 83FFh 
+MONITOR_STACK_TOP EQU 8400h 
+
+CMD_LINE_SIZE EQU   80h 
+NO_BKPT_ADDR EQU	0FFFFh		; BKPT address meaning "BKPT is not set"
+
+SERIAL_CONTROL EQU  0h 
+SERIAL_DATA EQU     1h 
+
+
+
+; Note: Calling conventions - parameters and results are usually in A, BC, DE, HL
+; These registers may be destroyed
+; IX an IY should be preserved
+;==============================================================================
+; ROM
+;==============================================================================
+
+			.ORG    0 	; RESET address
+            DI      
+            LD      sp,MONITOR_STACK_TOP
+            JP		MAIN
+            ; Here is a space for an additional code, in case we would be 
+            ; running out of ROM space
+            
+            .ORG	38h	; RST 38h address = BREAKPOINT
+            DI
+            ; Save registers
+            LD		(gRegisters+REG_IX),ix
+            LD		(gRegisters+REG_IY),iy
+            LD		(gRegisters+REG_HL),hl
+            LD		(gRegisters+REG_DE),de
+            LD		(gRegisters+REG_BC),bc
+            POP		hl	; Get the IP from the stack
+            LD		(gRegisters+REG_SP),sp
+            LD      sp,MONITOR_STACK_TOP
+            PUSH	af
+            POP		de
+            LD		(gRegisters+REG_AF),de
+            DEC		hl	; Point IP to the last instruction
+            LD		(gRegisters+REG_PC),hl
+            
+            ; Replace the breakpoint with the original byte
+            CP		l,(gBkptAddr)
+            JR		nz,BREAK_DISPLAY
+            CP		h,(gBkptAddr+1)
+            JR		nz,BREAK_DISPLAY
+            LD		a,(gOriginalBkptByte)
+            LD		(hl),a
+
+			; We may want to reinitialize the serial port here,
+            ; but it may be disruptive to the user code. Let's go without it.
+            
+            ; And display the info
+BREAK_DISPLAY:
+            LD		hl,cCRLF
+            CALL	PrintString
+            CALL	PrintRegisters
+            JP		CMDLOOP
+            
+
+			; Code executed after RESET
+MAIN:
+            LD      hl,gRegisters 
+            LD      b,REG_SP 
+            SUB     a 
+CLEAR_REGS:         
+            LD      (hl),a 
+            INC     hl 
+            DJNZ    CLEAR_REGS 
+            LD      hl,USER_RAM_END+1 
+            LD      (gRegisters+REG_SP),hl 
+            LD      hl,USER_RAM_START 
+            LD      (gRegisters+REG_PC),hl 
+            
+            ; Copy the test code into user RAM
+            LD		BC,TESTCODE_LEN
+            LD		DE,USER_RAM_START
+            LD		HL,cTestCode
+            LDIR
+
+            ; Initialize the serial port
+            LD      a,15h 
+            OUT     (SERIAL_CONTROL),a 
+            LD      hl,cHelloString 
+            CALL    PrintString 
+
+			;
+            ; The command loop
+            ; ================
+            ;
+CMDLOOP:            
+            LD      hl,cPrompt 
+            CALL    PrintString 
+            CALL    ReadCmdLine 
+
+            LD      IX,gCmdLine 
+            LD      IY,cCmd_RD 
+            LD      HL,CMD_RD_LEN 
+            CALL    MemCmp 
+            JP      Z,CMDREAD 
+
+            LD      IX,gCmdLine 
+            LD      IY,cCmd_WR 
+            LD      HL,CMD_WR_LEN 
+            CALL    MemCmp 
+            JP      Z,CMDWRITE 
+
+            LD      IX,gCmdLine 
+            LD      IY,cCmd_G 
+            LD      HL,CMD_G_LEN 
+            CALL    MemCmp 
+            JP      Z,CMDGO 
+
+            LD      IX,gCmdLine 
+            LD      IY,cCmd_C 
+            LD      HL,CMD_C_LEN 
+            CALL    MemCmp 
+            JP      Z,CMDCONTINUE 
+
+            LD      IX,gCmdLine 
+            LD      IY,cCmd_CSPACE
+            LD      HL,CMD_CSPACE_LEN 
+            CALL    MemCmp 
+            JP      Z,CMDCONTINUE_WITH_BKPT
+
+            LD      IX,gCmdLine 
+            LD      IY,cCmd_R 
+            LD      HL,CMD_R_LEN 
+            CALL    MemCmp 
+            JP      Z,CMDREG 
+
+            LD      IX,gCmdLine 
+            LD      IY,cCmd_AF
+            LD      HL,CMD_AF_LEN 
+            CALL    MemCmp 
+            LD		IY,gRegisters+REG_AF
+            JP      Z,CMDREGSET
+
+            LD      IX,gCmdLine 
+            LD      IY,cCmd_BC
+            LD      HL,CMD_BC_LEN 
+            CALL    MemCmp 
+            LD		IY,gRegisters+REG_BC
+            JP      Z,CMDREGSET
+
+            LD      IX,gCmdLine 
+            LD      IY,cCmd_DE
+            LD      HL,CMD_DE_LEN 
+            CALL    MemCmp 
+            LD		IY,gRegisters+REG_DE
+            JP      Z,CMDREGSET
+
+            LD      IX,gCmdLine 
+            LD      IY,cCmd_HL
+            LD      HL,CMD_HL_LEN 
+            CALL    MemCmp 
+            LD		IY,gRegisters+REG_HL
+            JP      Z,CMDREGSET
+
+            LD      IX,gCmdLine 
+            LD      IY,cCmd_IX
+            LD      HL,CMD_IX_LEN 
+            CALL    MemCmp 
+            LD		IY,gRegisters+REG_IX
+            JP      Z,CMDREGSET
+
+            LD      IX,gCmdLine 
+            LD      IY,cCmd_IY
+            LD      HL,CMD_IY_LEN 
+            CALL    MemCmp 
+            LD		IY,gRegisters+REG_IY
+            JP      Z,CMDREGSET
+
+            LD      IX,gCmdLine 
+            LD      IY,cCmd_SP
+            LD      HL,CMD_SP_LEN 
+            CALL    MemCmp 
+            LD		IY,gRegisters+REG_SP
+            JP      Z,CMDREGSET
+
+            LD      IX,gCmdLine 
+            LD      IY,cCmd_PC
+            LD      HL,CMD_PC_LEN 
+            CALL    MemCmp 
+            LD		IY,gRegisters+REG_PC
+            JP      Z,CMDREGSET
+
+            LD      HL,cUnknownCmd 
+            CALL    PrintString 
+            JP      cmdLoop 
+
+CMDBADPARAM:        
+            LD      HL,cBadParam 
+            CALL    PrintString 
+            JP      cmdLoop 
+
+CMDREAD:            ; Dump the Nth page of USER RAM, N=0..3
+            LD      A,(IX+0) ; The next char in CMD loop
+            SUB     '0' 
+            JR      C,CMDBADPARAM 
+            CP      4 
+            JR      NC,CMDBADPARAM 
+            LD      B,A 
+            LD      C,0 
+            LD      A,(IX+1) ; Should be the terminator
+            CP      C 
+            JR      NZ,CMDBADPARAM 
+            LD      IX,USER_RAM_START 
+            ADD     IX,BC 
+            LD      B,10h ; 16 rows
+CR_LINE_LOOP:       
+            PUSH    BC 
+            PUSH    IX 
+            POP     HL 
+            CALL    PrintWord 
+            LD      HL,cColonSpace 
+            CALL    PrintString 
+            LD      B,10h 
+CR_BYTE_LOOP:       
+            PUSH    BC 
+            LD      A,(IX+0) 
+            CALL    PrintByte 
+            LD      A,' ' 
+            CALL    PrintChar 
+            INC     IX 
+            POP     BC 
+            DJNZ    CR_BYTE_LOOP 
+            LD      HL,cCRLF 
+            CALL    PrintString 
+            POP     BC 
+            DJNZ    CR_LINE_LOOP 
+            JP      cmdLoop 
+
+CMDWRITE:           
+            CALL    ParseWord 
+            JR      C,CMDBADPARAM ; Error
+            PUSH    HL ; Address
+                    ; TODO: Allow only addresses from the user RAM
+            POP     IY 
+            LD      A,(IX+0) 
+            CP      ' ' 
+            JR      NZ,CMDBADPARAM 
+            INC     IX 
+CW_BYTE:            
+            CALL    ParseByte 
+            JR      C,CMDBADPARAM ; Error
+            LD      (IY+0),A 
+            INC     IY 
+            SUB     A 
+            CP      (IX+0) 
+            JR      NZ,CW_BYTE ; Terminating NUL
+            JP      cmdLoop 
+
+CMDGO:
+			; Parse the PC address
+			CALL	ParseWord
+            JP      C,CMDBADPARAM ; Error
+            ; Store the new PC address
+            ; A little problem: If the command fails due to a bad format,
+            ; the new PC will stay set anyway. I am too lazy to fix it.
+            LD		(gRegisters+REG_PC),hl
+            SUB     a 
+            CP      (ix+0) 
+            JR		Z,CMDCONTINUE ; No bkpt address param
+            LD		a,' '
+            CP      (ix+0) 
+            JP		NZ,CMDBADPARAM ; Expected space
+            INC		ix
+
+CMDCONTINUE_WITH_BKPT:
+            CALL    ParseWord 
+            JP      C,CMDBADPARAM ; Error
+            SUB     a 
+            CP      (ix+0) 
+            JP		NZ,CMDBADPARAM ; Missing NUL terminator
+			JR		ContinueRunWithBkpt
+CMDCONTINUE:              
+			JR		ContinueRun
+
+CMDREG:     ; Print out the CPU registers
+			CALL	PrintRegisters
+            JP      cmdLoop 
+
+CMDREGSET:	; Set the register, which address is in IY
+            CALL    ParseWord 
+            JP      C,CMDBADPARAM ; Error
+            SUB     a 
+            CP      (ix+0) 
+            JP		NZ,CMDBADPARAM ; Missing NUL terminator
+			LD		(iy+0),l
+            LD		(iy+1),h
+            JP 		cmdLoop
+
+; Continue running program with a breakpoint
+; IN HL - Breakpoint address
+CONTINUERUNWITHBKPT:
+			LD		a,(hl)
+            LD		(gOriginalBkptByte),a
+            LD		(hl),0FFh		; Instruction RST 38h
+            LD		(gBkptAddr),hl
+            JR		CR_SETREGS
+
+; Continue running program without a breakpoint
+CONTINUERUN:
+			LD		a,0FFh
+            LD		(gOriginalBkptByte),a
+            LD		hl,NO_BKPT_ADDR
+            LD		(gBkptAddr),hl
+; Restore all registers and jump to PC
+CR_SETREGS:
+            LD		sp,(gRegisters+REG_SP)
+			LD		hl,(gRegisters+REG_AF)
+            PUSH	hl
+            POP		af
+			LD		hl,(gRegisters+REG_PC)
+            PUSH	hl
+            LD		bc,(gRegisters+REG_BC)
+            LD		de,(gRegisters+REG_DE)
+            LD		hl,(gRegisters+REG_HL)
+            LD		ix,(gRegisters+REG_IX)
+            LD		iy,(gRegisters+REG_IY)
+            RET		; Use the PC pushed on the stack
+
+
+; Read a command line
+; and store it into gCmdLine
+; Special characters:
+;       CR = submit command
+;       BS = delete last character
+;       ESC = restart command line
+READCMDLINE:        
+            PUSH    ix 
+            LD      ix,0 ; Counter
+RCL_LOOP:           
+            CALL    ReadChar 
+            CP      0Dh ; CR?
+            JR      nz,rcl_not_cr 
+            PUSH    ix 
+            POP     hl 
+            LD      de,gCmdLine 
+            ADD     hl,de 
+            SUB     a 
+            LD      (hl),a ; String terminator
+            LD      hl,cCRLF ; Print CRLF
+            CALL    PrintString 
+            JR      rcl_exit 
+RCL_NOT_CR:         
+            CP      08h ; BS?
+            JR      nz,rcl_not_bs 
+            PUSH    ix 
+            POP     hl 
+            SUB     a 
+            CP      l 
+            JR      z,rcl_loop ; Empty command line, nothing to delete
+            DEC     ix 
+            LD      hl,cBSSpaceBS ; Overwrite previous char with a space
+            CALL    PrintString 
+            JR      rcl_loop 
+RCL_NOT_BS:         
+            CP      1Bh ; ESC?
+            JR      nz,rcl_not_esc 
+RCL_ESC_LOOP:       
+            PUSH    ix 
+            POP     hl 
+            SUB     a 
+            CP      l 
+            JR      z,rcl_loop ; Empty command line, nothing to delete
+            DEC     ix 
+            LD      hl,cBSSpaceBS ; Overwrite previous char with a space
+            CALL    PrintString 
+            JR      rcl_esc_loop 
+RCL_NOT_ESC:        
+            CP      ' ' 
+            JR      c,rcl_loop ; Control char
+            CP      07Fh 
+            JR      nc,rcl_loop ; Char >= 7Fh
+            PUSH    ix 
+            POP     hl 
+            LD      de,CMD_LINE_SIZE-1 
+            CCF     
+            SBC     hl,de 
+            JR      nc,rcl_loop ; Buffer full, no space for terminating zero
+            PUSH    ix 
+            POP     hl 
+            LD      de,gCmdLine 
+            ADD     hl,de 
+            LD      (hl),a 
+            INC     ix 
+            CALL    PrintChar ; Echo the character
+            JR      rcl_loop 
+
+RCL_EXIT:           
+            POP     ix 
+            RET     
+
+                    ;==============================================================================
+                    ; Utilities
+                    ;==============================================================================
+
+                    ; Print a char
+                    ; IN A - character
+                    ; 
+PRINTCHAR:          
+            PUSH    af 
+PC_WAIT:            
+            IN      a,(SERIAL_CONTROL) 
+            AND     02 
+            JR      z,pc_wait 
+            POP     af 
+            OUT     (SERIAL_DATA),a 
+            RET     
+
+                    ; Print a string
+                    ; IN HL - string address
+                    ; 
+PRINTSTRING:        
+            LD      a,(hl) 
+            OR      a 
+            RET     z 
+            CALL    PrintChar 
+            INC     hl 
+            JR      PrintString 
+
+
+                    ; Print a hexadecimal digit
+                    ; IN A - lower 4 bits is the digit to be printed
+PRINTNIBBLE:        
+            AND     0Fh 
+            CP      0Ah 
+            JR      c,PN_NUMBER 
+            ADD     a,'A'-0Ah 
+            JR      PN_PRINT 
+PN_NUMBER:          
+            ADD     a,'0' 
+PN_PRINT:           
+            CALL    PrintChar 
+            RET     
+
+
+                    ; Print a hexadecimal byte
+                    ; IN A - byte to be printed
+PRINTBYTE:          
+            PUSH    af 
+            SRL     a 
+            SRL     a 
+            SRL     a 
+            SRL     a 
+            CALL    PrintNibble 
+            POP     af 
+            CALL    PrintNibble 
+            RET     
+
+
+                    ; Print a hexadecimal word
+                    ; IN HL - word to be printed
+PRINTWORD:          
+            PUSH    hl 
+            LD      a,h 
+            CALL    PrintByte 
+            POP     hl 
+            LD      a,l 
+            CALL    PrintByte 
+            RET     
+
+
+                    ; Print string followed by a hexadecimal word
+                    ; IN HL - string address
+                    ; IN DE - word to be printed
+PRINTSTRINGANDWORD: 
+            PUSH    DE 
+            CALL    PrintString 
+            POP     HL 
+            CALL    PrintWord 
+            RET     
+
+
+					; Print out the CPU registers
+PRINTREGISTERS:             
+            LD      HL,cRegAF 
+            LD      DE,(gRegisters+REG_AF) 
+            CALL    PrintStringAndWord 
+            LD      HL,cRegBC 
+            LD      DE,(gRegisters+REG_BC) 
+            CALL    PrintStringAndWord 
+            LD      HL,cRegDE 
+            LD      DE,(gRegisters+REG_DE) 
+            CALL    PrintStringAndWord 
+            LD      HL,cRegHL 
+            LD      DE,(gRegisters+REG_HL) 
+            CALL    PrintStringAndWord 
+            LD      HL,cRegIX 
+            LD      DE,(gRegisters+REG_IX) 
+            CALL    PrintStringAndWord 
+            LD      HL,cRegIY 
+            LD      DE,(gRegisters+REG_IY) 
+            CALL    PrintStringAndWord 
+            LD      HL,cRegSP 
+            LD      DE,(gRegisters+REG_SP) 
+            CALL    PrintStringAndWord 
+            LD      HL,cRegPC 
+            LD      DE,(gRegisters+REG_PC) 
+            CALL    PrintStringAndWord 
+            LD      HL,cCRLF 
+            CALL    PrintString 
+            RET
+            
+
+                    ; Read a char
+                    ; OUT A - character
+READCHAR:           
+            IN      a,(SERIAL_CONTROL) 
+            AND     01h 
+            JR      z,ReadChar 
+            IN      a,(SERIAL_DATA) 
+            RET     
+
+
+                    ; Parse a single hexadecimal digit
+                    ; IN A - digit
+                    ; OUT A - corresponding number
+                    ; On error sets carry flag
+PARSENIBBLE:        
+            CP      '0' 
+            RET     C 
+            CP      '9'+1 
+            JR      NC,PN_UPPERCASE 
+            SUB     '0' 
+            RET     
+PN_UPPERCASE:       
+            CP      'A' 
+            RET     C 
+            CP      'F'+1 
+            JR      NC,PN_LOWERCASE 
+            SUB     'A'-10 
+            RET     
+PN_LOWERCASE:       
+            CP      'a' 
+            RET     C 
+            CP      'f'+1 
+            JR      NC,PN_ERROR 
+            SUB     'a'-10 
+            RET     
+PN_ERROR:           
+            SCF     
+            RET     
+                    ; 
+
+                    ; Parse a hexadecimal byte (two hex digits)
+                    ; IN IX - address of the text
+                    ; OUT A	- byte
+                    ; OUT IX - points behind the text
+                    ; On error sets carry flag
+PARSEBYTE:          
+            LD      A,(IX+0) 
+            CALL    PARSENIBBLE 
+            RET     C 
+            SLA     A 
+            SLA     A 
+            SLA     A 
+            SLA     A 
+            PUSH    AF 
+            INC     IX 
+            LD      A,(IX+0) 
+            CALL    PARSENIBBLE 
+            POP     BC 
+            RET     C 
+            OR      B 
+            INC     IX 
+            RET     
+
+
+                    ; Parse a hexadecimal word (four hex digits)
+                    ; IN IX - address of the text
+                    ; OUT HL - word
+                    ; OUT IX - points behind the text
+                    ; On error sets carry flag
+PARSEWORD:          
+            CALL    PARSEBYTE 
+            RET     C 
+            PUSH    AF 
+            CALL    PARSEBYTE 
+            POP     BC 
+            RET     C 
+            LD      H,B 
+            LD      L,A 
+            RET     
+
+                    ; MemCmp
+                    ; IN IX - address of the first buffer
+                    ; IN IY - address of the second buffer
+                    ; IN HL - number of bytes to compare
+                    ; Returns Z flag set if buffers are equal
+                    ; Returns IX and IY pointing to the difference or behind the buffer if equal
+MEMCMP:             
+            LD      a,l 
+            OR      h 
+            CP      0 
+            RET     z 
+            LD      a,(ix+0) 
+            CP      (iy+0) 
+            RET     nz 
+            INC     ix 
+            INC     iy 
+            DEC     hl 
+            JR      MEMCMP 
+
+
+                    ;==============================================================================
+                    ; ROM Data
+                    ;==============================================================================
+
+cHelloString:       
+            DB      "Implemented commands:",0Dh,0Ah 
+            DB      "    RD n - read a 256-bytes page of RAM; page number n=0..3",0Dh,0Ah 
+            DB      "    WR aaaa xxxxxx... - write bytes starting at address aaaa",0Dh,0Ah 
+            DB      "    G aaaa [bbbb]- go to a routine at address aaaa, bkpt at bbbb",0Dh,0Ah 
+            DB      "    C [bbbb]- continue execution, bkpt at bbbb",0Dh,0Ah 
+            DB      "    R - print out the CPU registers",0Dh,0Ah
+            DB      "    AF|BC|DE|HL|IX|IY|SP|PC=xxxx - set the CPU register",0Dh,0Ah,0Dh,0Ah 
+            DB      "Cmd line editing: Backspace = delete 1 char, Esc = delete all chars",0Dh,0Ah
+cCRLF:              
+            DB      0Dh,0Ah,0 
+cPrompt:            
+            DB      "> ",0 
+cBSSpaceBS:         
+            DB      08h,' ',08h,0 
+
+cCmd_RD:    DB      "RD " 
+CMD_RD_LEN  EQU     $-cCMD_RD 
+cCmd_WR:    DB      "WR " 
+CMD_WR_LEN  EQU     $-cCMD_WR 
+cCmd_G:     DB      "G " 
+CMD_G_LEN   EQU     $-cCMD_G 
+cCmd_C:     DB      "C",0
+CMD_C_LEN   EQU     $-cCMD_C 
+cCmd_CSPACE:DB      "C "
+CMD_CSPACE_LEN  EQU $-cCMD_CSPACE
+cCmd_R:     DB      "R",0 
+CMD_R_LEN   EQU     $-cCMD_R 
+cCmd_AF:	DB		"AF="
+CMD_AF_LEN	EQU		$-cCMD_AF
+cCmd_BC:	DB		"BC="
+CMD_BC_LEN	EQU		$-cCMD_BC
+cCmd_DE:	DB		"DE="
+CMD_DE_LEN	EQU		$-cCMD_DE
+cCmd_HL:	DB		"HL="
+CMD_HL_LEN	EQU		$-cCMD_HL
+cCmd_IX:	DB		"IX="
+CMD_IX_LEN	EQU		$-cCMD_IX
+cCmd_IY:	DB		"IY="
+CMD_IY_LEN	EQU		$-cCMD_IY
+cCmd_SP:	DB		"SP="
+CMD_SP_LEN	EQU		$-cCMD_SP
+cCmd_PC:	DB		"PC="
+CMD_PC_LEN	EQU		$-cCMD_PC
+
+cUnknownCmd: DB     "Unknown command",0Dh,0Ah,0 
+cBadParam:  DB      "Bad parameter",0Dh,0Ah,0 
+cColonSpace: DB     ": ",0 
+
+cRegAF:     DB      "AF:",0 
+cRegBC:     DB      "  BC:",0 
+cRegDE:     DB      "  DE:",0 
+cRegHL:     DB      "  HL:",0 
+cRegIX:     DB      0Dh,0Ah,"IX:",0 
+cRegIY:     DB      "  IY:",0 
+cRegSP:     DB      "  SP:",0 
+cRegPC:     DB      "  PC:",0 
+
+; Compiled test.z80
+; I'll directly load it into the USER RAM to save me time at debugging
+cTestCode:	DB		0F3h,031h,000h,083h,03Eh,015h,0D3h,000h,021h,029h,080h,0CDh,020h,080h,021h,02Fh
+			DB		080h,0CDh,020h,080h,0FFh,0F5h,0DBh,000h,0E6h,002h,028h,0FAh,0F1h,0D3h,001h,0C9h
+			DB		07Eh,0B7h,0C8h,0CDh,015h,080h,023h,018h,0F7h,041h,068h,06Fh,06Ah,020h,000h,06Ch
+			DB		069h,064h,069h,021h,00Dh,00Ah,000h
+TESTCODE_LEN EQU $-cTestCode
+
+                    ;==============================================================================
+                    ; RAM
+                    ;==============================================================================
+
+            .ORG    MONITOR_RAM_START ; Monitor's variables
+
+                    ; Structure of registers
+REG_AF      EQU     0 
+REG_BC      EQU     2 
+REG_DE      EQU     4 
+REG_HL      EQU     6 
+REG_IX      EQU     8 
+REG_IY      EQU     10 
+REG_SP      EQU     12 
+REG_PC      EQU     14 
+REG_SIZE    EQU     16 
+
+gRegisters:          
+            DS      REG_SIZE ; Stored User registers
+gOriginalBkptByte:
+			DS		1	; Original user code byte replaced by the breakpoint
+gBkptAddr:
+			DS		2	; Address, where the breakpoint is set
+gCmdLine:           
+            DS      CMD_LINE_SIZE 
+
+
+
+
+

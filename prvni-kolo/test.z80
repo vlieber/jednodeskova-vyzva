@@ -1,0 +1,66 @@
+            .ENGINE mycomputer 
+            .ORG    8000h
+            
+            ;
+            ; This is a simple test code, to be loaded into the monitor
+            ;
+            
+USER_RAM_START EQU  8000h 
+USER_RAM_END EQU    82FFh 
+SERIAL_CONTROL EQU  0h 
+SERIAL_DATA EQU     1h 
+
+
+            DI      
+            LD      sp,USER_RAM_END+1
+
+            ; Initialize the serial port
+            LD      a,15h 
+            OUT     (SERIAL_CONTROL),a 
+            
+            ; Print a two-part message
+            LD      hl,gHelloString 
+FirstPrint:
+            CALL    PrintString 
+            LD      hl,gWorldString 
+SecondPrint:
+            CALL    PrintString 
+            
+			; Return top the monitor via BREAK = RST 38h
+            RST		38h
+            
+
+;==============================================================================
+; Utilities
+;==============================================================================
+
+; Print a char
+; IN A - character
+; 
+PrintChar:          
+            PUSH    af 
+pc_wait:            
+            IN      a,(SERIAL_CONTROL) 
+            AND     02 
+            JR      z,pc_wait 
+            POP     af 
+            OUT     (SERIAL_DATA),a 
+            RET     
+
+; Print a string
+; IN HL - string address
+; 
+PrintString:        
+            LD      a,(hl) 
+            OR      a 
+            RET     z 
+            CALL    PrintChar 
+            INC     hl 
+            JR      PrintString 
+
+gHelloString:
+			DB		"Ahoj ",0
+gWorldString:
+            DB		"lidi!",0Dh,0Ah,0
+            
+            
