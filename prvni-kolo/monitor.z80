@@ -46,10 +46,11 @@ SERIAL_DATA EQU     1h
             LD		(gRegisters+REG_PC),hl
             
             ; Replace the breakpoint with the original byte
-            CP		l,(gBkptAddr)
-            JR		nz,BREAK_DISPLAY
-            CP		h,(gBkptAddr+1)
-            JR		nz,BREAK_DISPLAY
+            LD		hl,(gBkptAddr)
+            LD		a,h
+            AND		l
+            CP		0FFh
+            JR		z,BREAK_DISPLAY	; Bkpt address 0FFFFh = not set
             LD		a,(gOriginalBkptByte)
             LD		(hl),a
 
@@ -703,11 +704,7 @@ gRegisters:
 gOriginalBkptByte:
 			DS		1	; Original user code byte replaced by the breakpoint
 gBkptAddr:
-			DS		2	; Address, where the breakpoint is set
+			DS		2	; Address, where is the breakpoint set
 gCmdLine:           
             DS      CMD_LINE_SIZE 
-
-
-
-
 

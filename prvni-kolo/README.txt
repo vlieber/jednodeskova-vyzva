@@ -32,3 +32,9 @@ Zvažoval jsem ještě načtení uživatelského programu v Intel HEX formátu,
 ale protože do ASM80.COM nejde udělat copy&paste (alespoň já jsem nepřišel
 na to jak), tak jsem to opustil jako kontraproduktivní. Přepisovat HEX
 ručně je blbost.
+
+
+Užitečné odkazy:
+================
+Rychlý přehled Z-80 instrukcí:
+	http://nemesis.lonestar.org/computers/tandy/software/apps/m4/qd/opcodes.html
